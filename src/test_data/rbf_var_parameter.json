@@ -1,0 +1,87 @@
+{
+  "metadata": {
+    "title": "Simple model"
+  },
+  "timestepper": {
+    "start": "2021-01-01",
+    "end": "2021-12-31",
+    "timestep": 1
+  },
+  "network": {
+    "nodes": [
+      {
+        "meta": {
+          "name": "input"
+        },
+        "type": "Input",
+        "max_flow": {
+          "type": "Constant",
+          "value": 1
+        }
+      },
+      {
+        "meta": {
+          "name": "link"
+        },
+        "type": "Link"
+      },
+      {
+        "meta": {
+          "name": "output"
+        },
+        "type": "Output",
+        "cost": {
+          "type": "Constant",
+          "value": -10
+        },
+        "max_flow": {
+          "type": "Parameter",
+          "name": "demand"
+        }
+      }
+    ],
+    "edges": [
+      {
+        "from_node": "input",
+        "to_node": "link"
+      },
+      {
+        "from_node": "link",
+        "to_node": "output"
+      }
+    ],
+    "parameters": [
+      {
+        "meta": {
+          "name": "demand"
+        },
+        "type": "RbfProfile",
+        "points": [
+          [
+            30,
+            0.5
+          ],
+          [
+            180,
+            0.3
+          ],
+          [
+            310,
+            0.7
+          ]
+        ],
+        "function": {
+          "Gaussian": {
+            "epsilon": 3.0
+          }
+        },
+        "variable": {
+          "is_active": true,
+          "days_of_year_range": 30,
+          "value_upper_bounds": 1.0,
+          "value_lower_bounds": 0.0
+        }
+      }
+    ]
+  }
+}
