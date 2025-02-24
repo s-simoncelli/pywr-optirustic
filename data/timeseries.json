@@ -14,10 +14,7 @@
           "name": "input"
         },
         "type": "Input",
-        "max_flow": {
-          "type": "Constant",
-          "value": 1
-        }
+        "max_flow": 50.0
       },
       {
         "meta": {
@@ -65,34 +62,36 @@
             "max": 10.0
           }
         }
-      }
-    ],
-    "metric_sets": [
+      },
       {
-        "name": "node_metric",
-        "metrics": [
-          {
-            "type": "Node",
-            "name": "output"
+        "meta": {
+          "name": "my-interpolated-profile"
+        },
+        "type": "RbfProfile",
+        "points": [
+          [
+            90,
+            0.5
+          ],
+          [
+            180,
+            0.3
+          ],
+          [
+            270,
+            0.7
+          ]
+        ],
+        "function": {
+          "Gaussian": {
+            "epsilon": 3.0
           }
-        ]
-      }
-    ],
-    "outputs": [
-      {
-        "name": "outputs",
-        "type": "Memory",
-        "metric_set": "node_metric",
-        "aggregation": {
-          "time": {
-            "type": "CountNonZero"
-          },
-          "metrics": {
-            "type": "Max"
-          },
-          "scenario": {
-            "type": "Sum"
-          }
+        },
+        "variable": {
+          "is_active": true,
+          "days_of_year_range": 30,
+          "value_upper_bounds": 1.0,
+          "value_lower_bounds": 0.0
         }
       }
     ]

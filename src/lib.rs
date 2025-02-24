@@ -1,15 +1,13 @@
 mod error;
 mod problem;
+mod scenario;
 
-use optirustic::algorithms::{
-    AdaptiveNSGA3, Algorithm as OAlgorithm, MaxGenerationValue, StoppingConditionType, NSGA2, NSGA3,
-};
-use std::error::Error;
-use std::path::{Path, PathBuf};
+use optirustic::algorithms::{AdaptiveNSGA3, Algorithm as OAlgorithm, NSGA2, NSGA3};
+use std::path::Path;
 
 use crate::error::WrapperError;
 use crate::problem::PywrProblem;
-use log::{info, LevelFilter};
+use crate::scenario::OptimisationScenario;
 use optirustic::algorithms::{NSGA2Arg, NSGA3Arg};
 use optirustic::core::Problem;
 
@@ -31,14 +29,16 @@ impl PywrOptirustic {
     /// * `model_file`: The path to the model JSON file.
     /// * `data_path`: The optional path where the model data is stored.
     /// * `algorithm`: The algorithm and its option to use to solve the optimisation problem.
+    /// * `scenario`: The optimisation scenario used to define the objectives and constraints.
     ///
-    /// returns: `Box<PywrOptirustic>`
+    /// returns: `Result<(), WrapperError>`
     pub fn run(
         model_file: &Path,
         data_path: Option<&Path>,
         algorithm: Algorithm,
+        scenario: OptimisationScenario,
     ) -> Result<(), WrapperError> {
-        let pywr_problem = PywrProblem::new(model_file, data_path)?;
+        let pywr_problem = PywrProblem::new(model_file, data_path, scenario)?;
 
         let objectives = pywr_problem.objectives.clone();
         let variables = pywr_problem.variables();
@@ -61,30 +61,4 @@ impl PywrOptirustic {
 
         Ok(())
     }
-}
-
-fn main() -> Result<(), Box<dyn Error>> {
-    env_logger::builder()
-        .filter_level(LevelFilter::Debug)
-        .init();
-
-    info!("Loading JSON file");
-    let model_file = PathBuf::from("./data/timeseries.json");
-    let problem = PywrProblem::new(&model_file, None)?;
-
-    println!("{:?}", problem.variables());
-
-    let algorithm = Algorithm::NSGA2(NSGA2Arg {
-        number_of_individuals: 100,
-        stopping_condition: StoppingConditionType::MaxGeneration(MaxGenerationValue(250)),
-        crossover_operator_options: None,
-        mutation_operator_options: None,
-        parallel: Some(false),
-        export_history: None,
-        resume_from_file: None,
-        seed: Some(10),
-    });
-    PywrOptirustic::run(&model_file, None, algorithm)?;
-
-    Ok(())
 }

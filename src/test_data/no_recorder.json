@@ -77,24 +77,6 @@
           }
         ]
       }
-    ],
-    "outputs": [
-      {
-        "name": "outputs",
-        "type": "Memory",
-        "metric_set": "node_metric",
-        "aggregation": {
-          "time": {
-            "type": "CountNonZero"
-          },
-          "metrics": {
-            "type": "Max"
-          },
-          "scenario": {
-            "type": "Sum"
-          }
-        }
-      }
     ]
   }
 }

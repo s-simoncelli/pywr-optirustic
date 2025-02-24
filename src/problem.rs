@@ -4,9 +4,10 @@ use std::fmt::{Debug, Formatter};
 use std::path::Path;
 
 use crate::error::WrapperError;
+use crate::scenario::{ConstraintConfig, OptimisationScenario};
 use log::{debug, info, warn};
 use optirustic::core::{
-    BoundedNumber, EvaluationResult, Evaluator, Individual, Objective, VariableType,
+    BoundedNumber, Constraint, EvaluationResult, Evaluator, Individual, Objective, VariableType,
 };
 use pywr_core::models::Model;
 use pywr_core::parameters::{
@@ -208,7 +209,7 @@ impl VariableParameterConfig {
                         // check if the day range is valid
                         if let Some(day_range) = day_range {
                             if day_range >= 364 {
-                                return Err(WrapperError::InvalidBounds(
+                                return Err(WrapperError::InvalidParameterValueBounds(
                                     parameter_name.to_string(),
                                     "the day range must be a number smaller than 364".to_string(),
                                 ));
@@ -221,7 +222,7 @@ impl VariableParameterConfig {
                                 .collect();
 
                             if day_distances.iter().any(|d| d <= &(2 * day_range)) {
-                                return Err(WrapperError::InvalidBounds(
+                                return Err(WrapperError::InvalidParameterValueBounds(
                                     parameter_name.to_string(),
                                     format!("The days of the year are too close together for the given \
                                      `days_of_year_range`. This could cause the optimised days \
@@ -241,8 +242,6 @@ impl VariableParameterConfig {
                             if let Some(day_range) = day_range {
                                 // day variables - skip day 1
                                 if var_index > 0 {
-                                    // TODO check distances between points
-                                    // TODO check negative values
                                     let var_name = Self::get_rbf_day_var(parameter_name, var_index);
                                     let lb = (point.0 - day_range) as i64;
                                     let ub = (point.0 + day_range) as i64;
@@ -290,6 +289,8 @@ pub(crate) struct PywrProblem {
     variable_configs: HashMap<String, VariableParameterConfig>,
     /// The list of objectives.
     pub(crate) objectives: Vec<Objective>,
+    /// The list of constraints.
+    pub(crate) constraints: Vec<Constraint>,
 }
 
 impl Debug for PywrProblem {
@@ -311,15 +312,20 @@ impl PywrProblem {
     ///
     /// * `path`: The path to the JSON file.
     /// * `data_path`: The path where the model data is stored.
+    /// * `scenario`: The optimisation scenario used to define the objectives and constraints.
     ///
     /// returns: `Result<PywrProblem, WrapperError>`
-    pub(crate) fn new(path: &Path, data_path: Option<&Path>) -> Result<Self, WrapperError> {
+    pub(crate) fn new(
+        path: &Path,
+        data_path: Option<&Path>,
+        scenario: OptimisationScenario,
+    ) -> Result<Self, WrapperError> {
         // load the model file
         let data =
             std::fs::read_to_string(path).map_err(|e| WrapperError::Generic(e.to_string()))?;
         let data_path = data_path.or_else(|| path.parent());
 
-        Self::new_from_str(data.as_str(), data_path)
+        Self::new_from_str(data.as_str(), data_path, scenario)
     }
 
     /// Define and set up a new pywr optimisation problem from a model provided as string.
@@ -328,9 +334,14 @@ impl PywrProblem {
     ///
     /// * `data`: The model as string.
     /// * `data_path`: The path where the model data is stored. Optional.
+    /// * `scenario`: The optimisation scenario used to define the objectives and constraints.
     ///
     /// returns: `Result<PywrProblem, WrapperError>`
-    pub(crate) fn new_from_str(data: &str, data_path: Option<&Path>) -> Result<Self, WrapperError> {
+    pub(crate) fn new_from_str(
+        data: &str,
+        data_path: Option<&Path>,
+        scenario: OptimisationScenario,
+    ) -> Result<Self, WrapperError> {
         // parse the schema
         let schema: PywrModel =
             serde_json::from_str(data).map_err(|e| WrapperError::Pywr(e.to_string()))?;
@@ -367,14 +378,64 @@ impl PywrProblem {
             return Err(WrapperError::NoModelParameters);
         }
 
-        // collect objectives TODO
+        // collect objectives
         let mut objectives: Vec<Objective> = vec![];
+        for sc_objective in scenario.objectives.iter() {
+            // check that the recorder exists
+            if !Self::does_recorder_exist(&model, sc_objective.recorder_name()) {
+                return Err(WrapperError::MissingRecorder(
+                    sc_objective.recorder_name().to_string(),
+                ));
+            }
+            let objective = sc_objective.to_opt_constraint();
+            info!(
+                "Setting objective '{}' on recorder '{}' with direction {}",
+                objective.name(),
+                sc_objective.recorder_name(),
+                sc_objective.direction()
+            );
+            objectives.push(objective);
+        }
+
+        // collect constraints
+        let mut constraints: Vec<Constraint> = vec![];
+        if let Some(sc_constraints) = &scenario.constraints {
+            for sc_constraint in sc_constraints.iter() {
+                // check that the recorder exists
+                if !Self::does_recorder_exist(&model, sc_constraint.recorder_name()) {
+                    return Err(WrapperError::MissingRecorder(
+                        sc_constraint.recorder_name().to_string(),
+                    ));
+                }
+                constraints.extend(sc_constraint.to_opt_constraint());
+                info!(
+                    "Setting constraints on recorder '{}' to {}",
+                    sc_constraint.recorder_name(),
+                    sc_constraint.get_bound_string()
+                );
+            }
+        } else {
+            warn!("No constraints have been defined");
+        }
 
         Ok(PywrProblem {
             model,
             variable_configs,
             objectives,
+            constraints,
         })
+    }
+
+    /// Check that a recorder exists.
+    ///
+    /// # Arguments
+    ///
+    /// * `model`: The pywr model.
+    /// * `name`: The name of the recorder.
+    ///
+    /// returns: `bool`
+    fn does_recorder_exist(model: &Model, name: &str) -> bool {
+        model.network().recorders().iter().any(|r| r.name() == name)
     }
 
     /// Get the optirustic variables.
@@ -389,6 +450,20 @@ impl PywrProblem {
         }
         variables
     }
+
+    // /// Get the optirustic objectives.
+    // ///
+    // /// returns: `Vec<Objective>`
+    // pub fn objectives(&self) -> &Vec<Objective> {
+    //     &self.objectives
+    // }
+    //
+    // /// Get the optirustic constraints.
+    // ///
+    // /// returns: `Vec<Constraint>`
+    // pub fn constraints(&self) -> &Vec<Constraint> {
+    //     &self.constraints
+    // }
 
     /// Get a vector containing the variable values for a parameter from an individual. This is used
     /// to get the variable values chosen by the genetic algorithm and stored in an `Individual`.
@@ -474,13 +549,31 @@ impl Evaluator for PywrProblem {
             .run_with_state(&mut state, &ClpSolverSettings::default())?;
 
         // collect the objectives
-        // TODO
         let mut objectives: HashMap<String, f64> = HashMap::new();
-        // objectives.insert("x^2".to_string(), SCHProblem::f1(x));
+        for objective in self.objectives.iter() {
+            // the recorder name is the objective name
+            let rec_name = objective.name();
+            let rec_value = self
+                .model
+                .network()
+                .get_aggregated_value(&rec_name, state.recorder_state())?;
+            objectives.insert(objective.name(), rec_value);
+        }
 
         // collect the constraints
-        // TODO check if defined
         let mut constraints: HashMap<String, f64> = HashMap::new();
+        for constraint in self.constraints.iter() {
+            let rec_name = ConstraintConfig::get_recorder_name(constraint);
+            // check if recorder's value was already calculated as objective
+            let rec_value = if objectives.contains_key(&rec_name) {
+                objectives[&rec_name]
+            } else {
+                self.model
+                    .network()
+                    .get_aggregated_value(&rec_name, state.recorder_state())?
+            };
+            constraints.insert(constraint.name(), rec_value);
+        }
 
         Ok(EvaluationResult {
             constraints: Some(constraints),
@@ -492,6 +585,7 @@ impl Evaluator for PywrProblem {
 #[cfg(test)]
 mod tests {
     use crate::problem::{PywrProblem, VariableParameterConfig, VariableParameterType};
+    use crate::scenario::{Bound, ConstraintConfig, ObjectiveConfig, OptimisationScenario};
     use optirustic::core::utils::dummy_evaluator;
     use optirustic::core::{Individual, Objective, ObjectiveDirection, Problem, VariableValue};
     use pywr_core::parameters::ParameterName;
@@ -505,11 +599,26 @@ mod tests {
             .join("test_data")
     }
 
+    fn dummy_scenario() -> OptimisationScenario {
+        OptimisationScenario {
+            objectives: vec![ObjectiveConfig::new(
+                "outputs".to_string(),
+                ObjectiveDirection::Minimise,
+            )],
+            constraints: Some(vec![ConstraintConfig::new(
+                "outputs".to_string(),
+                Some(Bound::new(10.0, true)),
+                None,
+            )
+            .unwrap()]),
+        }
+    }
+
     /// Test the variable initialisation for a constant parameter.
     #[test]
     fn test_constant_parameter() {
         let file = test_path().join("constant_var_parameter.json");
-        let pywr_problem = PywrProblem::new(&file, None).unwrap();
+        let pywr_problem = PywrProblem::new(&file, None, dummy_scenario()).unwrap();
         let data = pywr_problem.variable_configs.get("demand").unwrap();
 
         assert_eq!(data.name, "demand");
@@ -518,13 +627,28 @@ mod tests {
         assert_eq!(data.variables[0].name(), "demand");
         assert_eq!(data.variables[0].label(), "real");
 
-        let objectives = vec![Objective::new(
-            "dummy_objective",
-            ObjectiveDirection::Minimise,
-        )];
+        // check objectives
+        assert_eq!(pywr_problem.objectives.len(), 1);
+        assert_eq!(
+            pywr_problem.objectives[0].name(),
+            "'outputs' objective".to_string()
+        );
+        assert_eq!(
+            pywr_problem.objectives[0].direction(),
+            ObjectiveDirection::Minimise
+        );
+
+        // check constraints
+        assert_eq!(pywr_problem.constraints.len(), 1);
+        assert_eq!(
+            format!("{}", pywr_problem.constraints[0]),
+            "'outputs' lower bound > 10".to_string()
+        );
+
+        let objectives = &pywr_problem.objectives;
         let variables = pywr_problem.variables();
         // use dummy evaluator not to move pywr_problem
-        let problem = Problem::new(objectives, variables, None, dummy_evaluator()).unwrap();
+        let problem = Problem::new(objectives.clone(), variables, None, dummy_evaluator()).unwrap();
 
         let mut dummy_individual = Individual::new(Arc::new(problem));
         dummy_individual
@@ -543,7 +667,7 @@ mod tests {
     #[test]
     fn test_rbf_parameter() {
         let file = test_path().join("rbf_var_parameter.json");
-        let pywr_problem = PywrProblem::new(&file, None).unwrap();
+        let pywr_problem = PywrProblem::new(&file, None, dummy_scenario()).unwrap();
         let data = pywr_problem.variable_configs.get("demand").unwrap();
 
         // use dummy evaluator not to move pywr_problem
@@ -612,7 +736,7 @@ mod tests {
     #[test]
     fn test_empty_rbf_profile() {
         let file = test_path().join("empty_rbf_var_parameter.json");
-        let pywr_problem = PywrProblem::new(&file, None);
+        let pywr_problem = PywrProblem::new(&file, None, dummy_scenario());
         assert!(pywr_problem
             .err()
             .unwrap()
@@ -624,7 +748,7 @@ mod tests {
     #[test]
     fn test_invalid_rbf_profile_day_bound() {
         let file = test_path().join("rbf_var_parameter_invalid_day_bound.json");
-        let pywr_problem = PywrProblem::new(&file, None);
+        let pywr_problem = PywrProblem::new(&file, None, dummy_scenario());
         assert!(pywr_problem
             .err()
             .unwrap()
@@ -636,7 +760,7 @@ mod tests {
     #[test]
     fn test_invalid_rbf_profile_days_too_close() {
         let file = test_path().join("rbf_var_parameter_points_too_close.json");
-        let pywr_problem = PywrProblem::new(&file, None);
+        let pywr_problem = PywrProblem::new(&file, None, dummy_scenario());
         assert!(pywr_problem
             .err()
             .unwrap()
@@ -648,7 +772,7 @@ mod tests {
     #[test]
     fn test_no_var_parameters() {
         let file = test_path().join("no_var_parameters.json");
-        let pywr_problem = PywrProblem::new(&file, None);
+        let pywr_problem = PywrProblem::new(&file, None, dummy_scenario());
         assert!(pywr_problem
             .err()
             .unwrap()
@@ -656,11 +780,23 @@ mod tests {
             .contains("The model does not contain any variable parameters"));
     }
 
+    /// The model has no valid recorders for the objective and constraints.
+    #[test]
+    fn test_no_recorder() {
+        let file = test_path().join("no_recorder.json");
+        let pywr_problem = PywrProblem::new(&file, None, dummy_scenario());
+        assert!(pywr_problem
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("The recorder named 'outputs' does not exist"));
+    }
+
     /// The model has no parameters.
     #[test]
     fn test_no_parameters() {
         let file = test_path().join("no_parameters.json");
-        let pywr_problem = PywrProblem::new(&file, None);
+        let pywr_problem = PywrProblem::new(&file, None, dummy_scenario());
         assert!(pywr_problem
             .err()
             .unwrap()

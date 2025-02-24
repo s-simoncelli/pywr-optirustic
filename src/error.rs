@@ -20,5 +20,9 @@ pub enum WrapperError {
     #[error("The model does not contain any variable parameters. Make sure the parameters have been properly set up to use")]
     NoVariableParameters,
     #[error("The bounds for parameter {0} are invalid because: {1}")]
-    InvalidBounds(String, String),
+    InvalidParameterValueBounds(String, String),
+    #[error("The bounds for constraint {0} are invalid because: {1}")]
+    InvalidConstraintBounds(String, String),
+    #[error("The recorder named '{0}' does not exist")]
+    MissingRecorder(String),
 }
