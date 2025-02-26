@@ -1,13 +1,22 @@
 use crate::error::WrapperError;
 use optirustic::core::{Constraint, Objective, ObjectiveDirection, RelationalOperator};
+use pywr_schema::metric_sets::MetricSet;
+use pywr_schema::outputs::Output;
+use pywr_schema::parameters::Parameter;
+use serde::Deserialize;
+use std::fs;
+use std::path::PathBuf;
 
 /// Define an objective for the optimisation problem.
+#[derive(Deserialize)]
 pub struct ObjectiveConfig {
     /// The name of the memory recorder to minimise or maximise.
     recorder_name: String,
     /// The optimisation direction to define the minimisation or maximisation of the aggregated
     /// recorder value.
     direction: ObjectiveDirection,
+    /// An optional comment
+    comment: Option<String>,
 }
 
 impl ObjectiveConfig {
@@ -19,12 +28,18 @@ impl ObjectiveConfig {
     /// * `recorder_name`: The name of the memory recorder to minimise or maximise.
     /// * `objective_direction`: The optimisation direction to define the minimisation or
     ///    maximisation of the recorder value.
+    /// * `comment`: An optional comment.
     ///
     /// returns: `ObjectiveConfig`
-    pub fn new(recorder_name: String, objective_direction: ObjectiveDirection) -> Self {
+    pub fn new(
+        recorder_name: String,
+        objective_direction: ObjectiveDirection,
+        comment: Option<String>,
+    ) -> Self {
         Self {
             recorder_name,
             direction: objective_direction,
+            comment,
         }
     }
 
@@ -48,6 +63,7 @@ impl ObjectiveConfig {
 }
 
 /// Define a constraint lower or upper bound.
+#[derive(Deserialize)]
 pub struct Bound {
     /// The bound value.
     value: f64,
@@ -72,6 +88,7 @@ impl Bound {
 }
 
 /// An optimisation problem constraint.
+#[derive(Deserialize)]
 pub struct ConstraintConfig {
     /// The name of the aggregated memory recorder to constraint.
     recorder_name: String,
@@ -79,6 +96,8 @@ pub struct ConstraintConfig {
     lower_bound: Option<Bound>,
     /// The recorder value upper bound.
     upper_bound: Option<Bound>,
+    /// An optional comment.
+    comment: Option<String>,
 }
 
 impl ConstraintConfig {
@@ -90,12 +109,14 @@ impl ConstraintConfig {
     /// * `recorder_name`: The name of the memory recorder to constraint.
     /// * `lower_bound`: The recorder value lower bound.
     /// * `upper_bound`: The recorder value upper bound.
+    /// * `comment`: An optional comment.
     ///
     /// returns: `Result<ConstraintConfig, WrapperError>`
     pub fn new(
         recorder_name: String,
         lower_bound: Option<Bound>,
         upper_bound: Option<Bound>,
+        comment: Option<String>,
     ) -> Result<ConstraintConfig, WrapperError> {
         if lower_bound.is_none() && upper_bound.is_none() {
             return Err(WrapperError::InvalidConstraintBounds(
@@ -107,6 +128,7 @@ impl ConstraintConfig {
             recorder_name,
             lower_bound,
             upper_bound,
+            comment,
         })
     }
 
@@ -181,17 +203,17 @@ impl ConstraintConfig {
         match (&self.lower_bound, &self.upper_bound) {
             (Some(lower_bound), Some(upper_bound)) => {
                 if lower_bound.strict {
-                    bound_string.push_str("]");
+                    bound_string.push(']');
                 } else {
-                    bound_string.push_str("[");
+                    bound_string.push('[');
                 }
                 bound_string.push_str(lower_bound.value.to_string().as_str());
                 bound_string.push_str("; ");
 
                 if upper_bound.strict {
-                    bound_string.push_str("]");
+                    bound_string.push(']');
                 } else {
-                    bound_string.push_str("[");
+                    bound_string.push('[');
                 }
                 bound_string.push_str(upper_bound.value.to_string().as_str());
 
@@ -199,9 +221,9 @@ impl ConstraintConfig {
             }
             (Some(lower_bound), None) => {
                 if lower_bound.strict {
-                    bound_string.push_str("]");
+                    bound_string.push(']');
                 } else {
-                    bound_string.push_str("[");
+                    bound_string.push('[');
                 }
                 bound_string.push_str(lower_bound.value.to_string().as_str());
                 bound_string.push_str("; Inf[");
@@ -212,9 +234,9 @@ impl ConstraintConfig {
 
                 bound_string.push_str(upper_bound.value.to_string().as_str());
                 if upper_bound.strict {
-                    bound_string.push_str("]");
+                    bound_string.push(']');
                 } else {
-                    bound_string.push_str("[");
+                    bound_string.push('[');
                 }
                 bound_string
             }
@@ -224,9 +246,38 @@ impl ConstraintConfig {
 }
 
 /// Define an optimisation scenarios to set problem objectives and constraints
+#[derive(Deserialize)]
 pub struct OptimisationScenario {
+    /// the scenario name.
+    pub name: String,
+    /// An optional description.
+    pub description: Option<String>,
     /// The list of objectives.
     pub objectives: Vec<ObjectiveConfig>,
     /// The list of constraints.
     pub constraints: Option<Vec<ConstraintConfig>>,
+    /// The list of variable parameters to add to the schema. Optional If the parameters are already
+    /// in the model.
+    pub parameters: Option<Vec<Parameter>>,
+    /// The list of metric sets to use to record metrics for model components.
+    pub metric_sets: Option<Vec<MetricSet>>,
+    /// The list of memory recorders to use to collect metrics and set objectives and constraints.
+    pub memory_recorders: Option<Vec<Output>>,
+}
+
+impl OptimisationScenario {
+    /// Load the optimisation scenario from a JSON file.
+    ///
+    /// # Arguments
+    ///
+    /// * `path`: The path to the JSON file.
+    ///
+    /// returns: `Result<OptimisationScenario, WrapperError>`
+    pub fn load_from_file(path: &PathBuf) -> Result<OptimisationScenario, WrapperError> {
+        let file = fs::File::open(path).map_err(|e| WrapperError::Generic(e.to_string()))?;
+        let scenario: OptimisationScenario =
+            serde_json::from_reader(file).map_err(|e| WrapperError::Generic(e.to_string()))?;
+
+        Ok(scenario)
+    }
 }

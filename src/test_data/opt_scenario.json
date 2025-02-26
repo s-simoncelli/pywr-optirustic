@@ -1,0 +1,63 @@
+{
+  "objectives": [
+    {
+      "recorder_name": "outputs",
+      "direction": "Minimise"
+    }
+  ],
+  "constraints": [
+    {
+      "recorder_name": "outputs",
+      "lower_bound": {
+        "value": 5.0,
+        "strict": false
+      }
+    }
+  ],
+  "parameters": [
+    {
+      "meta": {
+        "name": "demand"
+      },
+      "type": "Constant",
+      "value": 100.0,
+      "variable": {
+        "is_active": true,
+        "activation": {
+          "type": "Unit",
+          "min": 0.0,
+          "max": 10.0
+        }
+      }
+    }
+  ],
+  "metric_sets": [
+    {
+      "name": "node_metric",
+      "metrics": [
+        {
+          "type": "Node",
+          "name": "output"
+        }
+      ]
+    }
+  ],
+  "memory_recorders": [
+    {
+      "name": "outputs",
+      "type": "Memory",
+      "metric_set": "node_metric",
+      "aggregation": {
+        "time": {
+          "type": "CountNonZero"
+        },
+        "metrics": {
+          "type": "Max"
+        },
+        "scenario": {
+          "type": "Sum"
+        }
+      }
+    }
+  ]
+}

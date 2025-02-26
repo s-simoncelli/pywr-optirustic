@@ -14,6 +14,7 @@ use pywr_core::parameters::{
     ActivationFunction, ParameterName, RbfProfileVariableConfig, VariableConfig,
 };
 use pywr_core::solvers::{ClpSolver, ClpSolverSettings};
+use pywr_schema::outputs::Output;
 use pywr_schema::parameters::{
     Parameter as SchemaParameter, Parameter, ParameterType, VariableSettings,
 };
@@ -284,7 +285,8 @@ impl VariableParameterConfig {
 pub(crate) struct PywrProblem {
     /// The pywr model.
     model: Model,
-    /// The model schema.
+    /// The model schema used in the optimisation problem.
+    pub(crate) schema: PywrModel,
     /// Map containing the parameter name and its variable configuration.
     variable_configs: HashMap<String, VariableParameterConfig>,
     /// The list of objectives.
@@ -343,17 +345,36 @@ impl PywrProblem {
         scenario: OptimisationScenario,
     ) -> Result<Self, WrapperError> {
         // parse the schema
-        let schema: PywrModel =
+        let mut schema: PywrModel =
             serde_json::from_str(data).map_err(|e| WrapperError::Pywr(e.to_string()))?;
 
-        // load the model and its data
-        let model = schema
-            .build_model(data_path, None)
-            .map_err(|e| WrapperError::Pywr(e.to_string()))?;
-
-        // scan parameters in schema to check for settings for variables
+        // add variables
         let mut variable_configs: HashMap<String, VariableParameterConfig> = HashMap::new();
-        if let Some(parameters) = &schema.network.parameters {
+        if let Some(parameters) = &mut schema.network.parameters {
+            // add parameters from scenario to the schema
+            if let Some(sc_parameters) = &scenario.parameters {
+                for parameter in sc_parameters.iter() {
+                    // check if parameter already exists
+                    if let Some(item) = parameters
+                        .iter_mut()
+                        .find(|item| item.name() == parameter.name())
+                    {
+                        info!(
+                            "Overwriting parameter '{}' from scenario into schema",
+                            parameter.name()
+                        );
+                        let _ = std::mem::replace(item, parameter.clone());
+                    } else {
+                        info!(
+                            "Adding new parameter '{}' from scenario into schema",
+                            parameter.name()
+                        );
+                        parameters.push(parameter.clone());
+                    }
+                }
+            }
+
+            // scan parameters in schema to check for settings for variables
             for schema_parameter in parameters.iter() {
                 debug!(
                     "Checking if '{}' parameter has variables",
@@ -370,7 +391,6 @@ impl PywrProblem {
                     continue;
                 }
             }
-
             if variable_configs.is_empty() {
                 return Err(WrapperError::NoVariableParameters);
             }
@@ -378,10 +398,86 @@ impl PywrProblem {
             return Err(WrapperError::NoModelParameters);
         }
 
+        // add scenario metrics before objectives and constraints
+        if schema.network.metric_sets.is_none() {
+            schema.network.metric_sets = Some(Vec::new());
+        }
+        let metric_sets = schema.network.metric_sets.as_mut().unwrap();
+        // let metric_sets = &mut schema.network.metric_sets.unwrap_or_default();
+        if let Some(sc_metric_sets) = &scenario.metric_sets {
+            for sc_metric_set in sc_metric_sets.iter() {
+                if let Some(item) = metric_sets
+                    .iter_mut()
+                    .find(|item| item.name == sc_metric_set.name)
+                {
+                    info!(
+                        "Overwriting metric set '{}' from scenario into schema",
+                        sc_metric_set.name
+                    );
+                    let _ = std::mem::replace(item, sc_metric_set.clone());
+                } else {
+                    info!(
+                        "Adding metric set '{}' from scenario into schema",
+                        sc_metric_set.name
+                    );
+                    metric_sets.push(sc_metric_set.clone());
+                }
+            }
+        }
+
+        // add scenario recorders before objectives and constraints
+        if schema.network.outputs.is_none() {
+            schema.network.outputs = Some(Vec::new());
+        }
+        let outputs = &mut schema.network.outputs.as_mut().unwrap();
+        if let Some(sc_recorders) = &scenario.memory_recorders {
+            for sc_recorder in sc_recorders.iter() {
+                match sc_recorder {
+                    Output::Memory(sc_recorder) => {
+                        println!("{:?}", sc_recorder);
+                        if let Some(item) = outputs.iter_mut().find(|item| {
+                            // match only recorders of same type. If recorder has same name
+                            // but different type, always replace it
+                            match item {
+                                Output::Memory(item) => item.name == sc_recorder.name,
+                                _ => true,
+                            }
+                        }) {
+                            info!(
+                                "Overwriting output '{}' from scenario into schema",
+                                sc_recorder.name
+                            );
+                            let _ = std::mem::replace(item, Output::Memory(sc_recorder.clone()));
+                        } else {
+                            info!(
+                                "Adding output '{}' from scenario into schema",
+                                sc_recorder.name
+                            );
+                            outputs.push(Output::Memory(sc_recorder.clone()));
+                        }
+                    }
+                    _ => {
+                        return Err(WrapperError::InvalidScenarioRecorder(
+                            sc_recorder.to_string(),
+                        ))
+                    }
+                }
+            }
+        }
+
+        // load the model and its data
+        let model = schema
+            .build_model(data_path, None)
+            .map_err(|e| WrapperError::Pywr(e.to_string()))?;
+
         // collect objectives
         let mut objectives: Vec<Objective> = vec![];
         for sc_objective in scenario.objectives.iter() {
             // check that the recorder exists
+            debug!(
+                "Checking if recorder '{:?}' exists for objective",
+                sc_objective.recorder_name()
+            );
             if !Self::does_recorder_exist(&model, sc_objective.recorder_name()) {
                 return Err(WrapperError::MissingRecorder(
                     sc_objective.recorder_name().to_string(),
@@ -401,6 +497,10 @@ impl PywrProblem {
         let mut constraints: Vec<Constraint> = vec![];
         if let Some(sc_constraints) = &scenario.constraints {
             for sc_constraint in sc_constraints.iter() {
+                debug!(
+                    "Checking if recorder '{}' exists for constraint",
+                    sc_constraint.recorder_name()
+                );
                 // check that the recorder exists
                 if !Self::does_recorder_exist(&model, sc_constraint.recorder_name()) {
                     return Err(WrapperError::MissingRecorder(
@@ -420,6 +520,7 @@ impl PywrProblem {
 
         Ok(PywrProblem {
             model,
+            schema,
             variable_configs,
             objectives,
             constraints,
@@ -601,16 +702,23 @@ mod tests {
 
     fn dummy_scenario() -> OptimisationScenario {
         OptimisationScenario {
+            name: "Test scenario".to_string(),
+            description: None,
             objectives: vec![ObjectiveConfig::new(
                 "outputs".to_string(),
                 ObjectiveDirection::Minimise,
+                None,
             )],
             constraints: Some(vec![ConstraintConfig::new(
                 "outputs".to_string(),
                 Some(Bound::new(10.0, true)),
                 None,
+                None,
             )
             .unwrap()]),
+            parameters: None,
+            metric_sets: None,
+            memory_recorders: None,
         }
     }
 
@@ -802,5 +910,43 @@ mod tests {
             .unwrap()
             .to_string()
             .contains("does not contain any parameter"));
+    }
+
+    #[test]
+    /// Check that the scenario data are added to the schema and model
+    fn test_scenario() {
+        let file = test_path().join("model_for_scenario.json");
+        let scenario =
+            OptimisationScenario::load_from_file(&test_path().join("opt_scenario.json")).unwrap();
+        let pywr_problem = PywrProblem::new(&file, None, scenario).unwrap();
+
+        assert_eq!(pywr_problem.objectives[0].name(), "outputs");
+        assert_eq!(pywr_problem.constraints[0].name(), "'outputs' lower bound");
+        assert_eq!(pywr_problem.constraints[0].target(), 5.0);
+
+        // check parameter is added
+        let p_name = ParameterName {
+            name: "demand".to_string(),
+            parent: None,
+        };
+        assert!(pywr_problem
+            .model
+            .network()
+            .get_parameter_index_by_name(&p_name)
+            .is_ok());
+
+        // check metric set
+        assert!(pywr_problem
+            .model
+            .network()
+            .get_metric_set_by_name("node_metric")
+            .is_ok());
+
+        // check recorder
+        assert!(pywr_problem
+            .model
+            .network()
+            .get_recorder_by_name("outputs")
+            .is_ok());
     }
 }

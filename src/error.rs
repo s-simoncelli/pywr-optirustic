@@ -17,7 +17,7 @@ pub enum WrapperError {
     EmptyRBFProfile(String),
     #[error("Cannot setup the optimiser because the model does not contain any parameter")]
     NoModelParameters,
-    #[error("The model does not contain any variable parameters. Make sure the parameters have been properly set up to use")]
+    #[error("The model does not contain any variable parameters. Make sure the parameters have been properly set up")]
     NoVariableParameters,
     #[error("The bounds for parameter {0} are invalid because: {1}")]
     InvalidParameterValueBounds(String, String),
@@ -25,4 +25,6 @@ pub enum WrapperError {
     InvalidConstraintBounds(String, String),
     #[error("The recorder named '{0}' does not exist")]
     MissingRecorder(String),
+    #[error("The scenario recorder '{0}' must be of type Memory")]
+    InvalidScenarioRecorder(String),
 }
