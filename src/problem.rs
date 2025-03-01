@@ -203,6 +203,11 @@ impl VariableParameterConfig {
                             return Err(WrapperError::EmptyRBFProfile(parameter_name.to_string()));
                         }
 
+                        // check that the first value is 1
+                        if rbf.points[0].0 != 1 {
+                            return Err(WrapperError::RbfNoDay1(parameter_name.to_string()));
+                        }
+
                         info!("Setting variables in RBF profile parameter '{parameter_name}':");
                         let var_config: RbfProfileVariableConfig = (*variable_config).into();
                         let day_range = var_config.days_of_year_range();
@@ -241,7 +246,7 @@ impl VariableParameterConfig {
                         for (var_index, point) in rbf.points.iter().enumerate() {
                             // do not optimise day if the range is None
                             if let Some(day_range) = day_range {
-                                // day variables - skip day 1
+                                // day variables - skip day 1 as this is not optimised
                                 if var_index > 0 {
                                     let var_name = Self::get_rbf_day_var(parameter_name, var_index);
                                     let lb = (point.0 - day_range) as i64;
@@ -579,7 +584,7 @@ impl PywrProblem {
     /// * `individual`: The individual with the variables set by a genetic algorithm.
     ///
     /// returns: `Result<Vec<f64>, WrapperError>`
-    pub(crate) fn get_variable_vector(
+    pub(crate) fn get_f64_variable_vector(
         &self,
         parameter_name: &ParameterName,
         individual: &Individual,
@@ -589,7 +594,10 @@ impl PywrProblem {
             let mut values: Vec<f64> = vec![];
             match data.r#type {
                 VariableParameterType::RbfProfile => {
-                    // append day values first and then values
+                    // the first value is always 1 and not optimised
+                    values.push(1.0);
+
+                    // append day values from point #2
                     let rbf_size = (data.variables.len() + 1) / 2;
                     for var_index in 1..rbf_size {
                         let var_name =
@@ -597,6 +605,7 @@ impl PywrProblem {
                         let value = individual.get_variable_value(&var_name)?.as_integer()?;
                         values.push(value as f64);
                     }
+                    // append y-values
                     for var_index in 0..rbf_size {
                         let var_name = VariableParameterConfig::get_rbf_value_var(
                             &parameter_string,
@@ -636,7 +645,7 @@ impl Evaluator for PywrProblem {
             let parameter_index = network.get_parameter_index_by_name(&name)?;
 
             // fetch the variables in the individuals linked to this parameter
-            let vars = self.get_variable_vector(&name, individual)?;
+            let vars = self.get_f64_variable_vector(&name, individual)?;
             network.set_f64_parameter_variable_values(
                 parameter_index,
                 &vars,
@@ -765,7 +774,7 @@ mod tests {
 
         assert_eq!(
             pywr_problem
-                .get_variable_vector(&ParameterName::new("demand", None), &dummy_individual)
+                .get_f64_variable_vector(&ParameterName::new("demand", None), &dummy_individual)
                 .unwrap(),
             vec![19.5]
         );
@@ -791,6 +800,7 @@ mod tests {
         assert_eq!(data.r#type, VariableParameterType::RbfProfile);
         assert_eq!(data.variables.len(), 5);
 
+        // X1 does not exist
         // Y1
         let var_name = VariableParameterConfig::get_rbf_value_var("demand", 0);
         assert_eq!(data.variables[0].name(), var_name);
@@ -834,9 +844,9 @@ mod tests {
 
         assert_eq!(
             pywr_problem
-                .get_variable_vector(&ParameterName::new("demand", None), &dummy_individual)
+                .get_f64_variable_vector(&ParameterName::new("demand", None), &dummy_individual)
                 .unwrap(),
-            vec![45.0, 210.0, 21.0, 67.1, 13.34]
+            vec![1.0, 45.0, 210.0, 21.0, 67.1, 13.34]
         );
     }
 
@@ -850,6 +860,18 @@ mod tests {
             .unwrap()
             .to_string()
             .contains("because the property 'points' is empty"));
+    }
+
+    /// The first x-value in the RBF profile must be 1.
+    #[test]
+    fn test_rbf_profile_day_1() {
+        let file = test_path().join("rbf_var_parameter_no_day_1.json");
+        let pywr_problem = PywrProblem::new(&file, None, dummy_scenario());
+        assert!(pywr_problem
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("The first x-value in the RBF parameter"));
     }
 
     /// The RBF profile has a day range larger than 364.

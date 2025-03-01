@@ -4,7 +4,6 @@ mod scenario;
 
 use crate::error::WrapperError;
 use crate::problem::PywrProblem;
-use crate::scenario::OptimisationScenario;
 use log::info;
 use optirustic::algorithms::{AdaptiveNSGA3, Algorithm as OAlgorithm, ExportHistory, NSGA2, NSGA3};
 use optirustic::algorithms::{NSGA2Arg, NSGA3Arg};
@@ -12,6 +11,8 @@ use optirustic::core::Problem;
 use pywr_schema::PywrModel;
 use std::fs;
 use std::path::{Path, PathBuf};
+
+pub use crate::scenario::{ConstraintConfig, ObjectiveConfig, OptimisationScenario};
 
 /// The algorithm to use for the optimisation and its options.
 pub enum Algorithm {

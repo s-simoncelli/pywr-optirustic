@@ -15,6 +15,8 @@ pub enum WrapperError {
     NotSupportedParameterType(String),
     #[error("Cannot determine the number of points in the RBF parameter '{0}' because the property 'points' is empty")]
     EmptyRBFProfile(String),
+    #[error("The first x-value in the RBF parameter '{0}' must be 1")]
+    RbfNoDay1(String),
     #[error("Cannot setup the optimiser because the model does not contain any parameter")]
     NoModelParameters,
     #[error("The model does not contain any variable parameters. Make sure the parameters have been properly set up")]
