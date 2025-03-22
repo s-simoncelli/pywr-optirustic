@@ -1,5 +1,6 @@
 use crate::error::WrapperError;
 use optirustic::core::{Constraint, Objective, ObjectiveDirection, RelationalOperator};
+use pyo3::prelude::*;
 use pywr_schema::metric_sets::MetricSet;
 use pywr_schema::outputs::Output;
 use pywr_schema::parameters::Parameter;
@@ -8,7 +9,7 @@ use std::fs;
 use std::path::PathBuf;
 
 /// Define an objective for the optimisation problem.
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 pub struct ObjectiveConfig {
     /// The name of the memory recorder to minimise or maximise.
     recorder_name: String,
@@ -63,7 +64,7 @@ impl ObjectiveConfig {
 }
 
 /// Define a constraint lower or upper bound.
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 pub struct Bound {
     /// The bound value.
     value: f64,
@@ -88,7 +89,8 @@ impl Bound {
 }
 
 /// An optimisation problem constraint.
-#[derive(Deserialize)]
+#[pyclass]
+#[derive(Deserialize, Clone)]
 pub struct ConstraintConfig {
     /// The name of the aggregated memory recorder to constraint.
     recorder_name: String,
@@ -246,7 +248,8 @@ impl ConstraintConfig {
 }
 
 /// Define an optimisation scenarios to set problem objectives and constraints
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
+#[pyclass]
 pub struct OptimisationScenario {
     /// the scenario name.
     pub name: String,
@@ -275,9 +278,6 @@ impl OptimisationScenario {
     /// returns: `Result<OptimisationScenario, WrapperError>`
     pub fn load_from_file(path: &PathBuf) -> Result<OptimisationScenario, WrapperError> {
         let file = fs::File::open(path).map_err(|e| WrapperError::Generic(e.to_string()))?;
-        let scenario: OptimisationScenario =
-            serde_json::from_reader(file).map_err(|e| WrapperError::Generic(e.to_string()))?;
-
-        Ok(scenario)
+        serde_json::from_reader(file).map_err(|e| WrapperError::Generic(e.to_string()))
     }
 }
