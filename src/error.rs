@@ -1,5 +1,7 @@
 use log::error;
 use optirustic::core::OError;
+use pyo3::exceptions::PyValueError;
+use pyo3::PyErr;
 use thiserror::Error;
 
 /// Errors raised by the library
@@ -29,4 +31,10 @@ pub enum WrapperError {
     MissingRecorder(String),
     #[error("The scenario recorder '{0}' must be of type Memory")]
     InvalidScenarioRecorder(String),
+}
+
+impl From<WrapperError> for PyErr {
+    fn from(value: WrapperError) -> Self {
+        PyValueError::new_err(value.to_string())
+    }
 }

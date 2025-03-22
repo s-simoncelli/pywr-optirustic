@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::{Debug, Formatter};
-use std::path::Path;
+use std::path::PathBuf;
 
 use crate::error::WrapperError;
 use crate::scenario::{ConstraintConfig, OptimisationScenario};
@@ -323,14 +323,14 @@ impl PywrProblem {
     ///
     /// returns: `Result<PywrProblem, WrapperError>`
     pub(crate) fn new(
-        path: &Path,
-        data_path: Option<&Path>,
+        path: PathBuf,
+        data_path: Option<PathBuf>,
         scenario: OptimisationScenario,
     ) -> Result<Self, WrapperError> {
         // load the model file
-        let data =
-            std::fs::read_to_string(path).map_err(|e| WrapperError::Generic(e.to_string()))?;
-        let data_path = data_path.or_else(|| path.parent());
+        let data = std::fs::read_to_string(path.clone())
+            .map_err(|e| WrapperError::Generic(e.to_string()))?;
+        let data_path = data_path.or_else(|| path.parent().map(|p| p.to_owned()));
 
         Self::new_from_str(data.as_str(), data_path, scenario)
     }
@@ -346,7 +346,7 @@ impl PywrProblem {
     /// returns: `Result<PywrProblem, WrapperError>`
     pub(crate) fn new_from_str(
         data: &str,
-        data_path: Option<&Path>,
+        data_path: Option<PathBuf>,
         scenario: OptimisationScenario,
     ) -> Result<Self, WrapperError> {
         // parse the schema
@@ -472,7 +472,7 @@ impl PywrProblem {
 
         // load the model and its data
         let model = schema
-            .build_model(data_path, None)
+            .build_model(data_path.as_deref(), None)
             .map_err(|e| WrapperError::Pywr(e.to_string()))?;
 
         // collect objectives
@@ -735,7 +735,7 @@ mod tests {
     #[test]
     fn test_constant_parameter() {
         let file = test_path().join("constant_var_parameter.json");
-        let pywr_problem = PywrProblem::new(&file, None, dummy_scenario()).unwrap();
+        let pywr_problem = PywrProblem::new(file, None, dummy_scenario()).unwrap();
         let data = pywr_problem.variable_configs.get("demand").unwrap();
 
         assert_eq!(data.name, "demand");
@@ -784,7 +784,7 @@ mod tests {
     #[test]
     fn test_rbf_parameter() {
         let file = test_path().join("rbf_var_parameter.json");
-        let pywr_problem = PywrProblem::new(&file, None, dummy_scenario()).unwrap();
+        let pywr_problem = PywrProblem::new(file, None, dummy_scenario()).unwrap();
         let data = pywr_problem.variable_configs.get("demand").unwrap();
 
         // use dummy evaluator not to move pywr_problem
@@ -854,7 +854,7 @@ mod tests {
     #[test]
     fn test_empty_rbf_profile() {
         let file = test_path().join("empty_rbf_var_parameter.json");
-        let pywr_problem = PywrProblem::new(&file, None, dummy_scenario());
+        let pywr_problem = PywrProblem::new(file, None, dummy_scenario());
         assert!(pywr_problem
             .err()
             .unwrap()
@@ -866,7 +866,7 @@ mod tests {
     #[test]
     fn test_rbf_profile_day_1() {
         let file = test_path().join("rbf_var_parameter_no_day_1.json");
-        let pywr_problem = PywrProblem::new(&file, None, dummy_scenario());
+        let pywr_problem = PywrProblem::new(file, None, dummy_scenario());
         assert!(pywr_problem
             .err()
             .unwrap()
@@ -878,7 +878,7 @@ mod tests {
     #[test]
     fn test_invalid_rbf_profile_day_bound() {
         let file = test_path().join("rbf_var_parameter_invalid_day_bound.json");
-        let pywr_problem = PywrProblem::new(&file, None, dummy_scenario());
+        let pywr_problem = PywrProblem::new(file, None, dummy_scenario());
         assert!(pywr_problem
             .err()
             .unwrap()
@@ -890,7 +890,7 @@ mod tests {
     #[test]
     fn test_invalid_rbf_profile_days_too_close() {
         let file = test_path().join("rbf_var_parameter_points_too_close.json");
-        let pywr_problem = PywrProblem::new(&file, None, dummy_scenario());
+        let pywr_problem = PywrProblem::new(file, None, dummy_scenario());
         assert!(pywr_problem
             .err()
             .unwrap()
@@ -902,7 +902,7 @@ mod tests {
     #[test]
     fn test_no_var_parameters() {
         let file = test_path().join("no_var_parameters.json");
-        let pywr_problem = PywrProblem::new(&file, None, dummy_scenario());
+        let pywr_problem = PywrProblem::new(file, None, dummy_scenario());
         assert!(pywr_problem
             .err()
             .unwrap()
@@ -914,7 +914,7 @@ mod tests {
     #[test]
     fn test_no_recorder() {
         let file = test_path().join("no_recorder.json");
-        let pywr_problem = PywrProblem::new(&file, None, dummy_scenario());
+        let pywr_problem = PywrProblem::new(file, None, dummy_scenario());
         assert!(pywr_problem
             .err()
             .unwrap()
@@ -926,7 +926,7 @@ mod tests {
     #[test]
     fn test_no_parameters() {
         let file = test_path().join("no_parameters.json");
-        let pywr_problem = PywrProblem::new(&file, None, dummy_scenario());
+        let pywr_problem = PywrProblem::new(file, None, dummy_scenario());
         assert!(pywr_problem
             .err()
             .unwrap()
@@ -940,7 +940,7 @@ mod tests {
         let file = test_path().join("model_for_scenario.json");
         let scenario =
             OptimisationScenario::load_from_file(&test_path().join("opt_scenario.json")).unwrap();
-        let pywr_problem = PywrProblem::new(&file, None, scenario).unwrap();
+        let pywr_problem = PywrProblem::new(file, None, scenario).unwrap();
 
         assert_eq!(pywr_problem.objectives[0].name(), "outputs");
         assert_eq!(pywr_problem.constraints[0].name(), "'outputs' lower bound");
